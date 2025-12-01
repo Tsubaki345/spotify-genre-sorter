@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Spotify Genre Sorter</title>
+  <style>
+    :root{--accent:#1DB954}
+    body { font-family: Inter, Arial, sans-serif; padding:20px; max-width:1100px; margin:auto; background:#fafafa; color:#111; }
+    header { display:flex; gap:12px; align-items:center; margin-bottom:18px;}
+    h1 { margin:0; font-size:20px }
+    button { background:var(--accent); color:#fff; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; }
+    #loginSmall { background:#333; margin-left:auto; }
+    #message { margin-top:8px; color:#555; }
+    .controls { margin:14px 0; display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+    .stats { font-size:14px; color:#666; }
+    .genre-grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-top:18px; }
+    .genre { background:#fff; border-radius:10px; padding:12px; box-shadow:0 1px 4px rgba(0,0,0,0.06); }
+    .genre h3 { margin:0 0 8px 0; color:var(--accent); font-size:16px; display:flex; justify-content:space-between; align-items:center; gap:8px;}
+    .genre ul { margin:0; padding-left:18px; max-height:200px; overflow:auto; font-size:14px; color:#333; }
+    .small { font-size:13px; color:#666; }
+    .muted { color:#888; font-size:13px; }
+    .btn-secondary { background:#eee; color:#111; border-radius:8px; padding:6px 8px; border:0; cursor:pointer; }
+    .progress { margin-top:8px; height:8px; background:#eee; border-radius:6px; overflow:hidden; }
+    .progress > span { display:block; height:100%; width:0%; background:var(--accent); transition:width 300ms ease; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Spotify Genre Sorter</h1>
+    <button id="login">Login with Spotify</button>
+    <button id="logout" style="display:none" class="btn-secondary">Logout</button>
+    <div id="loginSmall" style="display:none">Logged in</div>
+  </header>
+
+  <div class="controls">
+    <div class="stats" id="stats">Not logged in</div>
+    <div id="actions" style="margin-left:auto"></div>
+  </div>
+
+  <div id="message" class="muted"></div>
+  <div class="progress" style="display:none"><span></span></div>
+
+  <div id="genreContainer" class="genre-grid"></div>
+
+<script>
+/*
+  Spotify Genre Sorter - Single File App
+  - Make sure your Spotify app redirect URI matches redirectUri below exactly,
+    and that you included scope: user-library-read playlist-modify-public
+*/
+
+const clientId = '7639cbefc7464d70ac7d06354024e2d1';
+const redirectUri = 'https://tsubaki345.github.io/spotify-genre-sorter/'; // EXACT match in Spotify Dashboard
+const scopes = 'user-library-read playlist-modify-public';
+
+const loginBtn = document.getElementById('login');
+const logoutBtn = document.getElementById('logout');
+const loginSmall = document.getElementById('loginSmall');
+const messageEl = document.getElementById('message');
+const statsEl = document.getElementById('stats');
+const actionsEl = document.getElementById('actions');
+const progressWrap = document.querySelector('.progress');
+const progressBar = document.querySelector('.progress > span');
+const genreContainer = document.getElementById('genreContainer');
+
+let token = null;
+let tokenExpiresAt = 0;
+let currentUserId = null;
+
+// Build auth URL
+function authUrl() {
+  const url = new URL('https://accounts.spotify.com/authorize');
+  url.searchParams.set('client_id', clientId);
+  url.searchParams.set('response_type', 'token');
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('scope', scopes);
+  url.searchParams.set('show_dialog', 'true');
+  return url.toString();
+}
+
+// Event handlers
+loginBtn.onclick = () => { window.location = authUrl(); };
+logoutBtn.onclick = () => { logout(); };
+
+// Parse token from URL hash (implicit grant)
+function parseTokenFromHash() {
+  if (!window.location.hash) return null;
+  const params = new URLSearchParams(window.location.hash.substring(1));
+  const accessToken = params.get('access_token');
+  const expiresIn = parseInt(params.get('expires_in') || '3600', 10);
+  if (accessToken) {
+    // clear hash from URL so token isn't exposed and history is clean
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    token = accessToken;
+    tokenExpiresAt = Date.now() + (expiresIn * 1000);
+    return token;
+  }
+  return null;
+}
+
+// Small helpers
+function setMessage(txt) { messageEl.textContent = txt; }
+function setStats(txt) { statsEl.textContent = txt; }
+function showProgress(enable) { progressWrap.style.display = enable ? 'block' : 'none'; if(!enable) progressBar.style.width = '0%'; }
+function setProgress(percent) { progressBar.style.width = Math.max(0, Math.min(100, percent)) + '%'; }
+
+// Logout
+function logout() {
+  token = null;
+  tokenExpiresAt = 0;
+  currentUserId = null;
+  genreContainer.innerHTML = '';
+  loginBtn.style.display = '';
+  logoutBtn.style.display = 'none';
+  loginSmall.style.display = 'none';
+  setMessage('Logged out.');
+  setStats('Not logged in');
+  actionsEl.innerHTML = '';
+}
+
+// Minimal fetch wrapper with auth + error handling
+async function authFetch(url, opts = {}) {
+  if (!token) throw new Error('Not authenticated');
+  if (!opts.headers) opts.headers = {};
+  opts.headers['Authorization'] = 'Bearer ' + token;
+  const res = await fetch(url, opts);
+  if (res.status === 401) {
+    // token expired or invalid
+    throw new Error('Unauthorized — token may have expired. Please re-login.');
+  }
+  return res;
+}
+
+// Get current user profile
+async function getCurrentUser() {
+  const res = await authFetch('https://api.spotify.com/v1/me');
+  if (!res.ok) throw new Error('Failed to get profile: ' + res.status);
+  const data = await res.json();
+  currentUserId = data.id;
+  return data;
+}
+
+// Fetch all saved tracks (auto-pagination)
+async function fetchAllSavedTracks(onProgress = null) {
+  let url = 'https://api.spotify.com/v1/me/tracks?limit=50';
+  const allItems = [];
+  let page = 0;
+  while (url) {
+    page++;
+    const res = await authFetch(url);
+    if (!res.ok) throw new Error('Failed to fetch tracks: ' + res.status);
+    const data = await res.json();
+    allItems.push(...data.items);
+    url = data.next;
+    if (onProgress) onProgress(allItems.length);
+  }
+  return allItems.map(it => ({
+    name: it.track.name,
+    artist: it.track.artists[0].name,
+    artistId: it.track.artists[0].id,
+    trackId: it.track.id,
+    uri: it.track.uri
+  }));
+}
+
+// Batch fetch artists (50 ids per request)
+async function fetchArtistsBatch(artistIds) {
+  const batches = [];
+  for (let i = 0; i < artistIds.length; i += 50) batches.push(artistIds.slice(i, i + 50));
+  const genresMap = {};
+  for (let i = 0; i < batches.length; i++) {
+    const ids = batches[i].join(',');
+    const res = await authFetch(`https://api.spotify.com/v1/artists?ids=${encodeURIComponent(ids)}`);
+    if (!res.ok) {
+      // mark all in batch unknown
+      batches[i].forEach(id => genresMap[id] = []);
+      continue;
+    }
+    const data = await res.json();
+    data.artists.forEach(a => { genresMap[a.id] = a.genres || []; });
+  }
+  return genresMap;
+}
+
+// Normalize genre string (basic): choose simpler primary label
+function normalizeGenreList(genres) {
+  if (!genres || genres.length === 0) return ['Unknown'];
+  // Some artists have very long lists; pick unique normalized tags
+  const normalized = genres.map(g => g.toLowerCase().trim()).slice(0, 3);
+  return normalized.length ? normalized : ['Unknown'];
+}
+
+// Group tracks by genre (use artist primary genre — but keep normalizing)
+function groupTracksByGenre(tracks, genresMap) {
+  const grouped = {};
+  for (const t of tracks) {
+    const glist = normalizeGenreList(genresMap[t.artistId] || []);
+    // Prefer first; if it's 'unknown', try second, else 'Unknown'
+    const primary = (glist[0] && glist[0] !== 'unknown') ? glist[0] : (glist[1] || 'Unknown');
+    const key = (primary || 'Unknown');
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(t);
+  }
+  return grouped;
+}
+
+// Render grouped result UI
+function renderGenres(grouped) {
+  genreContainer.innerHTML = '';
+  const genres = Object.keys(grouped).sort((a,b) => grouped[b].length - grouped[a].length);
+  genres.forEach(genre => {
+    const tracks = grouped[genre];
+    const div = document.createElement('div');
+    div.className = 'genre';
+    const h = document.createElement('h3');
+    const spanLeft = document.createElement('span');
+    spanLeft.textContent = genre;
+    const spanRight = document.createElement('span');
+    spanRight.innerHTML = `<span class="small">${tracks.length} track${tracks.length>1?'s':''}</span>`;
+    h.appendChild(spanLeft);
+    h.appendChild(spanRight);
+
+    const btnWrap = document.createElement('div');
+    btnWrap.style = 'margin-top:8px; display:flex; gap:8px; align-items:center;';
+    const createBtn = document.createElement('button');
+    createBtn.textContent = 'Create playlist';
+    createBtn.onclick = () => createPlaylistForGenre(genre, tracks, createBtn);
+    const sampleBtn = document.createElement('button');
+    sampleBtn.className = 'btn-secondary';
+    sampleBtn.textContent = 'Show sample';
+    sampleBtn.onclick = () => {
+      const list = div.querySelector('ul');
+      list.style.display = list.style.display === 'none' ? 'block' : 'none';
+    };
+    btnWrap.appendChild(createBtn);
+    btnWrap.appendChild(sampleBtn);
+
+    const ul = document.createElement('ul');
+    ul.style.display = 'block';
+    // show only first 30 tracks for performance
+    const showCount = Math.min(tracks.length, 200);
+    for (let i = 0; i < showCount; i++) {
+      const li = document.createElement('li');
+      li.textContent = `${tracks[i].name} — ${tracks[i].artist}`;
+      ul.appendChild(li);
+    }
+    if (tracks.length > showCount) {
+      const li = document.createElement('li');
+      li.className = 'muted';
+      li.textContent = `... and ${tracks.length - showCount} more`;
+      ul.appendChild(li);
+    }
+
+    div.appendChild(h);
+    div.appendChild(btnWrap);
+    div.appendChild(ul);
+    genreContainer.appendChild(div);
+  });
+}
+
+// Create Spotify Playlist & add tracks (100 URIs per add)
+async function createPlaylistForGenre(genre, tracks, buttonEl) {
+  if (!currentUserId) {
+    setMessage('User not loaded. Try reloading or logging in again.');
+    return;
+  }
+  try {
+    buttonEl.disabled = true;
+    buttonEl.textContent = 'Creating...';
+    setMessage(`Creating playlist for "${genre}"...`);
+
+    // Create playlist
+    const playlistTitle = `${capitalize(genre)} — Genre Sorter`;
+    const body = {
+      name: playlistTitle,
+      public: true,
+      description: `Tracks from your library tagged with "${genre}" (created by Genre Sorter)`
+    };
+    const res = await authFetch(`https://api.spotify.com/v1/users/${encodeURIComponent(currentUserId)}/playlists`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error('Failed to create playlist: ' + res.status);
+    const playlist = await res.json();
+
+    // Add tracks in batches
+    const uris = tracks.map(t => t.uri);
+    for (let i = 0; i < uris.length; i += 100) {
+      const batch = uris.slice(i, i + 100);
+      const addRes = await authFetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uris: batch })
+      });
+      if (!addRes.ok) console.warn('Partial add failure', addRes.status);
+    }
+
+    setMessage(`Playlist "${playlist.name}" created! Opening playlist...`);
+    window.open(playlist.external_urls.spotify, '_blank');
+    buttonEl.textContent = 'Created';
+  } catch (err) {
+    console.error(err);
+    setMessage('Error creating playlist: ' + (err.message || err));
+    buttonEl.textContent = 'Create playlist';
+    buttonEl.disabled = false;
+  }
+}
+
+// Capitalize helper
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+// Main flow
+async function run() {
+  try {
+    // Parse token if redirected back
+    parseTokenFromHash();
+
+    if (!token) {
+      setStats('Not logged in');
+      setMessage('Click "Login with Spotify" to start.');
+      loginBtn.style.display = '';
+      logoutBtn.style.display = 'none';
+      loginSmall.style.display = 'none';
+      return;
+    }
+
+    // Token present - show UI for logged in
+    loginBtn.style.display = 'none';
+    logoutBtn.style.display = '';
+    loginSmall.style.display = '';
+    setMessage('Authenticated. Loading your library...');
+    setStats('Loading...');
+
+    // Quick expiry check:
+    if (Date.now() > tokenExpiresAt) {
+      throw new Error('Access token expired. Please log in again.');
+    }
+
+    // Get user profile
+    const profile = await getCurrentUser();
+    setStats(`Logged in as ${profile.display_name || profile.id}`);
+    setMessage('Fetching saved tracks (this may take a moment for large libraries)...');
+    showProgress(true);
+
+    // Fetch saved tracks with progress update
+    const tracks = await fetchAllSavedTracks(count => {
+      setStats(`Fetched ${count} saved tracks...`);
+      // approximate progress unknown, just animate
+      setProgress(Math.min(95, Math.round((count % 1000) / 10)));
+    });
+
+    if (!tracks.length) {
+      setMessage('No saved tracks found in your library.');
+      showProgress(false);
+      return;
+    }
+
+    setMessage(`Fetched ${tracks.length} saved tracks. Resolving artist genres...`);
+    setProgress(10);
+
+    // Unique artist IDs
+    const artistIds = Array.from(new Set(tracks.map(t => t.artistId).filter(Boolean)));
+    setMessage(`Fetching ${artistIds.length} artists in batches...`);
+
+    const genresMap = await fetchArtistsBatch(artistIds);
+    setProgress(60);
+
+    // Group
+    const grouped = groupTracksByGenre(tracks, genresMap);
+    setProgress(85);
+    renderGenres(grouped);
+    setMessage(`Sorted into ${Object.keys(grouped).length} genres.`);
+    setProgress(100);
+    setTimeout(()=>showProgress(false), 400);
+  } catch (err) {
+    console.error(err);
+    showProgress(false);
+    setMessage('Error: ' + (err.message || err));
+  }
+}
+
+// Init
+run();
+</script>
+</body>
+</html>
