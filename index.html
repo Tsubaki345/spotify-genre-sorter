@@ -5,24 +5,24 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Spotify Genre Sorter (PKCE)</title>
 <style>
-  :root{--accent:#1DB954}
-  body { font-family: Inter, Arial, sans-serif; padding:20px; max-width:1100px; margin:auto; background:#fafafa; color:#111; }
-  header { display:flex; gap:12px; align-items:center; margin-bottom:18px;}
-  h1 { margin:0; font-size:20px }
-  button { background:var(--accent); color:#fff; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; }
-  #loginSmall { background:#333; margin-left:auto; }
-  #message { margin-top:8px; color:#555; }
-  .controls { margin:14px 0; display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
-  .stats { font-size:14px; color:#666; }
-  .genre-grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-top:18px; }
-  .genre { background:#fff; border-radius:10px; padding:12px; box-shadow:0 1px 4px rgba(0,0,0,0.06); }
-  .genre h3 { margin:0 0 8px 0; color:var(--accent); font-size:16px; display:flex; justify-content:space-between; align-items:center; gap:8px;}
-  .genre ul { margin:0; padding-left:18px; max-height:200px; overflow:auto; font-size:14px; color:#333; }
-  .small { font-size:13px; color:#666; }
-  .muted { color:#888; font-size:13px; }
-  .btn-secondary { background:#eee; color:#111; border-radius:8px; padding:6px 8px; border:0; cursor:pointer; }
-  .progress { margin-top:8px; height:8px; background:#eee; border-radius:6px; overflow:hidden; }
-  .progress > span { display:block; height:100%; width:0%; background:var(--accent); transition:width 300ms ease; }
+:root{--accent:#1DB954}
+body { font-family: Inter, Arial, sans-serif; padding:20px; max-width:1100px; margin:auto; background:#fafafa; color:#111; }
+header { display:flex; gap:12px; align-items:center; margin-bottom:18px;}
+h1 { margin:0; font-size:20px }
+button { background:var(--accent); color:#fff; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; }
+#loginSmall { background:#333; margin-left:auto; }
+#message { margin-top:8px; color:#555; }
+.controls { margin:14px 0; display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+.stats { font-size:14px; color:#666; }
+.genre-grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-top:18px; }
+.genre { background:#fff; border-radius:10px; padding:12px; box-shadow:0 1px 4px rgba(0,0,0,0.06); }
+.genre h3 { margin:0 0 8px 0; color:var(--accent); font-size:16px; display:flex; justify-content:space-between; align-items:center; gap:8px;}
+.genre ul { margin:0; padding-left:18px; max-height:200px; overflow:auto; font-size:14px; color:#333; }
+.small { font-size:13px; color:#666; }
+.muted { color:#888; font-size:13px; }
+.btn-secondary { background:#eee; color:#111; border-radius:8px; padding:6px 8px; border:0; cursor:pointer; }
+.progress { margin-top:8px; height:8px; background:#eee; border-radius:6px; overflow:hidden; }
+.progress > span { display:block; height:100%; width:0%; background:var(--accent); transition:width 300ms ease; }
 </style>
 </head>
 <body>
@@ -43,12 +43,12 @@
 <div id="genreContainer" class="genre-grid"></div>
 
 <script>
-// === CONFIG ===
+// ==== CONFIG ====
 const clientId = '7639cbefc7464d70ac7d06354024e2d1';
 const redirectUri = 'https://tsubaki345.github.io/spotify-genre-sorter/';
 const scopes = 'user-library-read playlist-modify-public';
 
-// === UI ELEMENTS ===
+// ==== UI ELEMENTS ====
 const loginBtn = document.getElementById('login');
 const logoutBtn = document.getElementById('logout');
 const loginSmall = document.getElementById('loginSmall');
@@ -62,7 +62,7 @@ const genreContainer = document.getElementById('genreContainer');
 let token = null;
 let currentUserId = null;
 
-// ===== PKCE HELPERS =====
+// ==== PKCE HELPERS ====
 function generateCodeVerifier(length = 128) {
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
@@ -77,7 +77,7 @@ async function generateCodeChallenge(verifier) {
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-// ===== AUTH FLOW =====
+// ==== AUTH FLOW ====
 async function login() {
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = await generateCodeChallenge(codeVerifier);
@@ -95,7 +95,7 @@ async function login() {
 
 async function exchangeCodeForToken(code) {
   const codeVerifier = sessionStorage.getItem('pkce_verifier');
-  if (!codeVerifier) throw new Error('PKCE verifier not found in sessionStorage');
+  if (!codeVerifier) throw new Error('PKCE verifier not found');
 
   const body = new URLSearchParams({
     client_id: clientId,
@@ -115,17 +115,16 @@ async function exchangeCodeForToken(code) {
   const data = await res.json();
   token = data.access_token;
   sessionStorage.removeItem('pkce_verifier');
-  return token;
 }
 
-// ===== URL CODE PARSING =====
+// ==== URL CODE PARSING ====
 async function handleRedirect() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code');
   if (code) {
     try {
       await exchangeCodeForToken(code);
-      history.replaceState(null, '', window.location.pathname); // clean URL
+      history.replaceState(null, '', window.location.pathname);
     } catch (err) {
       console.error(err);
       setMessage('Error during login: ' + err.message);
@@ -133,7 +132,7 @@ async function handleRedirect() {
   }
 }
 
-// ===== FETCH WRAPPER =====
+// ==== FETCH WRAPPER ====
 async function authFetch(url, opts = {}) {
   if (!token) throw new Error('Not authenticated');
   if (!opts.headers) opts.headers = {};
@@ -143,7 +142,7 @@ async function authFetch(url, opts = {}) {
   return res;
 }
 
-// ===== UI HELPERS =====
+// ==== UI HELPERS ====
 function setMessage(txt) { messageEl.textContent = txt; }
 function setStats(txt) { statsEl.textContent = txt; }
 function showProgress(enable) { progressWrap.style.display = enable ? 'block' : 'none'; if(!enable) progressBar.style.width='0%'; }
@@ -160,27 +159,35 @@ function logout() {
   actionsEl.innerHTML = '';
 }
 
-// ===== MAIN FLOW PLACEHOLDER =====
-// You can reuse all your existing track fetching, grouping, and playlist creation functions here.
-// The only difference is token handling now comes from PKCE.
+// ==== SPOTIFY LOGIC ====
+// Reuse all your previous functions for:
+// - getCurrentUser
+// - fetchAllSavedTracks
+// - fetchArtistsBatch
+// - normalizeGenreList
+// - groupTracksByGenre
+// - renderGenres
+// - createPlaylistForGenre
+// The only change is token now comes from PKCE flow.
 
 loginBtn.onclick = login;
 logoutBtn.onclick = logout;
 
-// Run on page load
+// ==== RUN ON LOAD ====
 (async () => {
   await handleRedirect();
   if (token) {
     loginBtn.style.display = 'none';
     logoutBtn.style.display = '';
     loginSmall.style.display = '';
-    setMessage('Authenticated. You can now fetch tracks...');
+    setMessage('Authenticated. Loading your library...');
     setStats('Logged in');
     // Call your previous run() function here
-    // run();
+    run(); // your existing track-fetching/grouping function
   }
 })();
 </script>
 </body>
 </html>
+
 
